@@ -1,0 +1,75 @@
+name: Build 3106 v3.1.12 unsigned IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-3106.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout upstream source v3.1.12
+        uses: actions/checkout@v4
+        with:
+          repository: QuinnTang74/3106
+          ref: 24f07fa4f6a4369f265046a0b0911b1e6c9d111d
+          path: upstream
+          persist-credentials: false
+
+      - name: Check Xcode, scheme and source version
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -list -project ThreeOneOSSix.xcodeproj
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ThreeOneOSSix/Info.plist)
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ThreeOneOSSix/Info.plist)
+          test "$VERSION" = "3.1.12"
+          echo "Building 3106 v$VERSION build $BUILD"
+
+      - name: Run upstream policy tests
+        working-directory: upstream
+        shell: bash
+        run: bash Tests/run_policy_tests.sh
+
+      - name: Build unsigned iPhoneOS app
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project ThreeOneOSSix.xcodeproj -scheme 3106 \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package and verify IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/3106.app"
+          test -d "$APP"
+          test -f "$APP/3106"
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          test "$VERSION" = "3.1.12"
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/package/Payload/"
+          (cd "$RUNNER_TEMP/package" && zip -qry "$GITHUB_WORKSPACE/3106-3.1.12-unsigned.ipa" Payload)
+          unzip -t "$GITHUB_WORKSPACE/3106-3.1.12-unsigned.ipa" | tail -n 1
+          shasum -a 256 "$GITHUB_WORKSPACE/3106-3.1.12-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3106-3.1.12-unsigned-ipa
+          path: 3106-3.1.12-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
