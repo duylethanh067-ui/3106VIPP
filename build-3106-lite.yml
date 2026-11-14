@@ -1,0 +1,74 @@
+name: Build 3106 Lite unsigned IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-3106-lite.yml
+      - scripts/make_3106_lite.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Lite build scripts
+        uses: actions/checkout@v4
+
+      - name: Checkout audited upstream 3106 3.2.5
+        uses: actions/checkout@v4
+        with:
+          repository: QuinnTang74/3106
+          ref: 8700bd458d284ca457f77e1f2eddf7fc8968d0eb
+          path: upstream
+          persist-credentials: false
+
+      - name: Apply Lite changes and verify disabled updates
+        run: |
+          set -euo pipefail
+          python3 scripts/make_3106_lite.py upstream
+          python3 scripts/make_3106_lite.py upstream --verify
+
+      - name: Verify source project and run upstream policy tests
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -list -project ThreeOneOSSix.xcodeproj
+          bash Tests/run_policy_tests.sh
+
+      - name: Build unsigned app
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          xcodebuild -project ThreeOneOSSix.xcodeproj -scheme 3106 \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package and validate IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/3106.app"
+          test -f "$APP/3106"
+          DISPLAY=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")
+          test "$DISPLAY" = '3106 Lite'
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/3106-Lite-${VERSION}-unsigned.ipa" Payload)
+          unzip -t "$GITHUB_WORKSPACE/3106-Lite-${VERSION}-unsigned.ipa" | tail -n 1
+          shasum -a 256 "$GITHUB_WORKSPACE/3106-Lite-${VERSION}-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3106-Lite-unsigned-IPA
+          path: 3106-Lite-*-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
