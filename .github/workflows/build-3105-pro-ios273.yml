@@ -1,0 +1,106 @@
+name: Build 3105 Pro with 3106 iOS 27.3 engine
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - name: Checkout integration scripts
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned 3106 3.2.5 engine
+        uses: actions/checkout@v4
+        with:
+          repository: QuinnTang74/3106
+          ref: 8700bd458d284ca457f77e1f2eddf7fc8968d0eb
+          path: engine
+          persist-credentials: false
+
+      - name: Checkout original 3105 v2 theme and icon
+        uses: actions/checkout@v4
+        with:
+          repository: YangJiiii/3105
+          ref: cdea2f08e2938658552720b34175ea1c8508265e
+          path: reference3105
+          persist-credentials: false
+
+      - name: Check upstream policy tests before UI integration
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          bash Tests/run_policy_tests.sh
+
+      - name: Integrate original UI with 3106 engine
+        run: |
+          set -euo pipefail
+          python3 scripts/integrate_3105_pro.py engine reference3105
+          python3 scripts/integrate_3105_pro.py engine --verify
+
+      - name: Compile unsigned app
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -project ThreeOneOSSix.xcodeproj -scheme 3106 \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            INFOPLIST_KEY_CFBundleDisplayName="3105 Pro" \
+            build > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || {
+              tail -n 160 "$RUNNER_TEMP/xcodebuild.log"
+              exit 1
+            }
+          tail -n 12 "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Package and verify unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/3106.app"
+          test -f "$APP/3106"
+          test -f "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName 3105 Pro' "$APP/Info.plist"
+          DISPLAY=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")
+          test "$DISPLAY" = '3105 Pro'
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          IPA="3105-Pro-${VERSION}-unsigned.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/$IPA" Payload)
+          unzip -t "$GITHUB_WORKSPACE/$IPA" | tail -n 1
+          shasum -a 256 "$GITHUB_WORKSPACE/$IPA"
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+          SOURCE_ZIP="3105-Pro-${VERSION}-source.zip"
+          mkdir -p "$RUNNER_TEMP/source-stage/3105-Pro/integration" \
+                   "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices"
+          rsync -a --exclude=.git engine/ "$RUNNER_TEMP/source-stage/3105-Pro/"
+          cp scripts/integrate_3105_pro.py "$RUNNER_TEMP/source-stage/3105-Pro/integration/"
+          cp .github/workflows/build-3105-pro-ios273.yml "$RUNNER_TEMP/source-stage/3105-Pro/integration/"
+          cp README_START_HERE.md "$RUNNER_TEMP/source-stage/3105-Pro/integration/"
+          cp reference3105/LICENSE "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices/"
+          cp reference3105/THIRD_PARTY_NOTICES.md "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices/"
+          (cd "$RUNNER_TEMP/source-stage" && zip -qry "$GITHUB_WORKSPACE/$SOURCE_ZIP" 3105-Pro)
+          unzip -t "$GITHUB_WORKSPACE/$SOURCE_ZIP" | tail -n 1
+          echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
+
+      - name: Save IPA artifact as fallback
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3105-Pro-IPA
+          path: 3105-Pro-*-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish direct IPA in GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "3105pro-build-${GITHUB_RUN_NUMBER}" "$IPA" "$SOURCE_ZIP" \
+            --title "3105 Pro | 3106 engine | Build ${GITHUB_RUN_NUMBER}" \
+            --notes "Unsigned research build. UI/theme from YangJiiii/3105 v2.0, engine from QuinnTang74/3106 v3.2.5. The 3106 author reports iOS 27.3 beta 1 compatibility; other 27.3 builds and actual on-device operation are NOT verified by this CI. Requires appropriate signing and entitlements. GPL-3.0 upstream notices apply."
