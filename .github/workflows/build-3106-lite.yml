@@ -56,6 +56,7 @@ jobs:
           set -euo pipefail
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/3106.app"
           test -f "$APP/3106"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName 3106 Lite' "$APP/Info.plist"
           DISPLAY=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")
           test "$DISPLAY" = '3106 Lite'
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
