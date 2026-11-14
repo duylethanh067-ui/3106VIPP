@@ -80,7 +80,6 @@ jobs:
                    "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices"
           rsync -a --exclude=.git engine/ "$RUNNER_TEMP/source-stage/3105-Pro/"
           cp .github/workflows/build-3105-pro-ios273.yml "$RUNNER_TEMP/source-stage/3105-Pro/integration/"
-          cp README_START_HERE.md "$RUNNER_TEMP/source-stage/3105-Pro/integration/"
           cp reference3105/LICENSE "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices/"
           cp reference3105/THIRD_PARTY_NOTICES.md "$RUNNER_TEMP/source-stage/3105-Pro/upstream-3105-notices/"
           (cd "$RUNNER_TEMP/source-stage" && zip -qry "$GITHUB_WORKSPACE/$SOURCE_ZIP" 3105-Pro)
